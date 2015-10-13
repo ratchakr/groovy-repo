@@ -1,0 +1,591 @@
+import groovy.sql.Sql;
+
+//Establish JDBC Connection to the DB
+def con = Sql.newInstance("jdbc:oracle:thin:@10.111.134.64:1523:msdp", "csiuser", "csiuser", "oracle.jdbc.driver.OracleDriver");
+log.info("Connection to Csi Mock DB Established");
+
+def req = new XmlSlurper().parseText(mockRequest.requestContent);
+def op = req.Body.InquireMobileSubscriberProfileRequest.operation ;
+def msisdnReq = req.Body.InquireMobileSubscriberProfileRequest.subscriberNumber ;
+if (msisdnReq == '' || msisdnReq == null) {
+	log.error("Please Provide Subscriber Number");
+	return;
+}
+long msisdn = msisdnReq.toLong();
+log.info(" MSISDN = "+msisdn);
+if (op == 'ADD') {
+	log.info("INSERT");
+	def String usageLimitReq = req.Body.InquireMobileSubscriberProfileRequest.usagelimit;
+	float usageLimit = Float.parseFloat(usageLimitReq);
+	
+	def String usageUnit = req.Body.InquireMobileSubscriberProfileRequest.usageunit;	
+	def String usageUsedReq = req.Body.InquireMobileSubscriberProfileRequest.usageused;
+	float usageUsed = Float.parseFloat(usageUsedReq);
+	def String autoRenew = req.Body.InquireMobileSubscriberProfileRequest.autorenew;
+	def String prodAttr = req.Body.InquireMobileSubscriberProfileRequest.productattr;
+	def String sessionStatus = req.Body.InquireMobileSubscriberProfileRequest.sessionstatus;
+
+	String workingEffStartDate = req.Body.InquireMobileSubscriberProfileRequest.starttime; 
+	String workingEffEndDate = req.Body.InquireMobileSubscriberProfileRequest.endtime;
+	log.info("usageLimit = "+ usageLimit);
+	log.info("usageUnit = "+ usageUnit);
+	log.info("usageUsed = "+ usageUsed);
+	log.info("workingEffStartDate = "+ workingEffStartDate);
+	log.info("workingEffEndDate = "+ workingEffEndDate);
+	log.info("autoRenew = "+ autoRenew);
+	log.info("prodAttr = "+ prodAttr);
+	log.info("sessionStatus = "+ sessionStatus);
+
+	def strMsg;
+	try {
+
+		//
+		
+		def existActive = con.rows('select SESSIONSTATUS from SUBSCRIBER_DATA where MSISDN = ? and SESSIONSTATUS = ?', [msisdn, 'A']);
+		if (existActive != null && existActive.size() > 0) {
+			log.info("existActive = " + existActive[0].get('SESSIONSTATUS'));
+			if (existActive[0].get('SESSIONSTATUS') == 'A') {
+				if ('A' == sessionStatus) {
+					log.info("Active Already Exists");
+					strMsg = "MSISDN "+ msisdn + " already has an Active Plan " + "\n" + "Cannot Add another Active Plan";
+					strMsg = strMsg + "\n" + "==================================================";
+					log.error(strMsg);
+					return;
+				}
+			}
+		}
+
+	// handle the dsId as sequence
+	def DATASETIDSEQ
+	def dsId
+
+	try {
+		con.eachRow('select DATASETIDSEQ.nextval as DATASETIDSEQ from dual') 
+		{ row ->
+     		dsId = row[0];
+ 		}
+
+	} catch (Exception ex) {
+		log.error("...Error in Getting the Sequence..."+ex.getMessage());
+	}
+
+	log.info("Sequence Value = "+dsId);	
+
+		con.execute(
+   	"""INSERT INTO SUBSCRIBER_DATA(DATASETID, MSISDN, USAGE_LIMIT, USAGE_LIMIT_UNIT, USAGE_USED, 
+   	RECURRENT_STARTTIME, RECURRENT_ENDTIME, RECURRENT_AUTORENEW,PRODUCTATTRIBUTES,SESSIONSTATUS)
+   	VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", [dsId, msisdn, usageLimit, usageUnit, usageUsed, workingEffStartDate, workingEffEndDate, autoRenew, prodAttr, sessionStatus])
+
+		
+		def updCount = con.getUpdateCount();
+		if (updCount.toInteger() > 0) {
+			strMsg = "Number of Record Inserted is "+updCount + " with MSISDN "+msisdn; 
+			log.info(strMsg);
+			strMsg  = strMsg + " \n" + "The Details of the Record you created is :"+ "\n"; 
+			
+			strMsg = strMsg + "\n" + "- SessionId = "+dsId + "\n"+ "- MSISDN = "+ msisdn + "\n" + "- UsageLimit = " + usageLimit + "\n- UsageUnit = "+usageUnit + "\n- UsageUsed = "+usageUsed + "\n- EffStartDate = "+workingEffStartDate+ "\n- EffEndDate = "+ workingEffEndDate + "\n- AutoRenew = "+ autoRenew + "\n- ProductAttribute = "+ prodAttr + "\n- Status = "+sessionStatus;
+			strMsg = strMsg + "\n" + "===============================" + "\n" + "===============================";			
+		} else {
+			strMsg = "No records matched Input Criteria..No records added";
+			log.warn(strMsg);
+		}
+
+	} catch(Exception ex){
+		log.error("...Some Error Occurred in INSERT..."+ ex.getMessage());
+	} finally {
+		log.info("...Exiting INSERT...");
+		requestContext.responseMessage = strMsg;//
+		
+	}
+
+
+
+log.info("End of Insert Operation");
+	
+} else if (op == 'DELETE') {
+log.info("IN DELETE");
+def msisdnReqDel = req.Body.InquireMobileSubscriberProfileRequest.subscriberNumber ;
+log.info("msisdnReqDel = "+msisdnReqDel);
+	if (msisdnReqDel == null || msisdnReqDel == '') {
+		log.error("..Subscriber Number is NULL..exiting program");
+		return;
+	}
+	long msisdnToDel = msisdnReqDel.toLong();
+
+	
+	log.info(msisdnToDel);
+
+
+	def sessionStatusReq = req.Body.InquireMobileSubscriberProfileRequest.sessionstatus;
+	log.info("sessionStatusReq:= "+ sessionStatusReq);
+	def sessionIdReq = req.Body.InquireMobileSubscriberProfileRequest.sessionid;
+	log.info("sessionIdReq:= "+ sessionIdReq);
+	int sessionId;
+	if (sessionIdReq != null && sessionIdReq != '') {
+		sessionId = sessionIdReq.toInteger();
+	}
+	log.info("sessionId:= "+ sessionId);
+
+	def strMsg;
+
+	try {
+
+
+		if (sessionId != 0 && msisdnToDel != 0) {
+			con.execute("""delete from SUBSCRIBER_DATA where MSISDN = ? and DATASETID = ? """ , [msisdnToDel, sessionId]);
+		} else {
+			strMsg = "Please provide valid SessionID and MSISDN as input" + "\n" + "================================================";
+			requestContext.responseMessage = strMsg;
+			return;
+		}
+		/*if (sessionStatusReq != null && sessionStatusReq != '' && sessionId != 0) {
+			//log.info("1st block");
+			con.execute("""delete from SUBSCRIBER_DATA where MSISDN = ? and DATASETID = ? and SESSIONSTATUS =?""" , [msisdnToDel, sessionId, sessionStatusReq.toString()]);
+		} else if (sessionStatusReq != null && sessionStatusReq != '' && sessionId == 0) {
+			//log.info("2nd block");
+			con.execute("""delete from SUBSCRIBER_DATA where MSISDN = ? and SESSIONSTATUS = ?""" , [msisdnToDel, sessionStatusReq.toString()]);			
+		} else if (sessionStatusReq == '' && sessionId == 0) {
+			//log.info("3rd block = "+msisdnToDel);
+			con.execute("""delete from SUBSCRIBER_DATA where MSISDN = ? """ , [msisdnToDel]);
+		}*/ 
+		def updCount = con.getUpdateCount();
+		if (updCount.toInteger() > 0) {
+			strMsg = "Number of Records Deleted : "+ updCount + " with MSISDN "+msisdnToDel; 
+			strMsg = strMsg + "\n" + "=====================================================";
+			log.info(strMsg);
+		} else {
+			strMsg = "No records matched Input Criteria" + "\n" + "No records got deleted";
+			strMsg = strMsg + "\n" + "===============================================";
+			log.warn(strMsg);
+		}
+
+		requestContext.responseMessage = strMsg;
+	} catch (Exception ex) {
+		log.error("...Some Error Occurred in Delete..."+ex.getMessage());
+	} finally {
+		log.info("...Exiting Delete ...");
+	}
+	
+
+
+} else if (op == 'UPDATE') {
+
+	def dsIdUpd = req.Body.InquireMobileSubscriberProfileRequest.sessionid;
+	if (dsIdUpd == null || dsIdUpd == '') {
+		log.error("SessionID is NULL..");
+		return;
+	}
+	int dsIdUpdVal = dsIdUpd.toInteger ();
+	log.info("Session ID = "+dsIdUpdVal);
+	def String usageLimitUpdReq = req.Body.InquireMobileSubscriberProfileRequest.usagelimit;
+	//int usageLimitUpd = usageLimitUpdReq.toInteger();
+	float usageLimitUpd = Float.parseFloat(usageLimitUpdReq);
+	def String usageUnitUpd = req.Body.InquireMobileSubscriberProfileRequest.usageunit;	
+	def String usageUsedUpdReq = req.Body.InquireMobileSubscriberProfileRequest.usageused;
+	float usageUsedUpd = Float.parseFloat(usageUsedUpdReq);
+	def String autoRenewUpd = req.Body.InquireMobileSubscriberProfileRequest.autorenew;
+	def String prodAttrUpd = req.Body.InquireMobileSubscriberProfileRequest.productattr;
+	def String sessionStatusUpd = req.Body.InquireMobileSubscriberProfileRequest.sessionstatus;
+
+
+	String workingEffStartDateUpd = req.Body.InquireMobileSubscriberProfileRequest.starttime; 
+	String workingEffEndDateUpd = req.Body.InquireMobileSubscriberProfileRequest.endtime;
+	
+	log.info("usageLimitUpd = "+ usageLimitUpd);
+	log.info("usageUnitUpd = "+ usageUnitUpd);
+	log.info("usageUsedUpd = "+ usageUsedUpd);
+	log.info("workingEffStartDateUpd = "+ workingEffStartDateUpd);
+	
+	log.info("workingEffEndDateUpd = "+ workingEffEndDateUpd);
+	log.info("autoRenewUpd = "+ autoRenewUpd);
+	log.info("prodAttrUpd = "+ prodAttrUpd);
+	log.info("sessionStatusUpd = "+ sessionStatusUpd);
+	def strMsg;
+	try {
+
+		//
+		def existActive = con.rows('select * from SUBSCRIBER_DATA where MSISDN = ? and SESSIONSTATUS = ?', [msisdn, 'A']);
+		if (existActive != null && existActive.size() > 0) {
+			def sessionIdForActiveRec = existActive[0].get('DATASETID');
+			log.info("existActive" + existActive[0].get('SESSIONSTATUS'));
+			log.info(" sessionIdForActiveRec " + sessionIdForActiveRec);
+			if (existActive[0].get('SESSIONSTATUS') == 'A') {
+				
+				if ('A' == sessionStatusUpd && (dsIdUpd != sessionIdForActiveRec)) {
+					log.info("Active Already Exists");
+					strMsg = "MSISDN "+ msisdn + " already has an Active Plan" + "\n" + "Cannot Update Status To Active";
+					strMsg = strMsg + "\n" + "==================================================";
+					log.error(strMsg);
+					requestContext.responseMessage = strMsg;	
+					return;
+				}
+			}
+		}
+		//
+
+
+		con.executeUpdate('UPDATE SUBSCRIBER_DATA SET USAGE_LIMIT = ?, USAGE_LIMIT_UNIT = ?, USAGE_USED = ?, RECURRENT_STARTTIME = ?, RECURRENT_ENDTIME = ?, RECURRENT_AUTORENEW = ?, PRODUCTATTRIBUTES = ?, SESSIONSTATUS = ? WHERE DATASETID = ? and MSISDN = ?', [usageLimitUpd, usageUnitUpd, usageUsedUpd, workingEffStartDateUpd, workingEffEndDateUpd, autoRenewUpd, prodAttrUpd, sessionStatusUpd, dsIdUpdVal, msisdn])
+		
+		def updCount = con.getUpdateCount();
+		if (updCount.toInteger() > 0) {
+			strMsg = "Number of Records Updated Successfully "+ updCount + " with MSISDN "+msisdn; 
+			strMsg  = strMsg + " \n" + "The Details of the Record you Updated is :"+ "\n"; 
+			strMsg = strMsg + "------------------------------------";
+			strMsg = strMsg + "\n" + "- SessionId = "+dsIdUpdVal + "\n"+ "- MSISDN = "+ msisdn + "\n" + "- UsageLimit = " + usageLimitUpd + "\n- UsageUnit = "+usageUnitUpd + "\n- UsageUsed = "+ usageUsedUpd + "\n- EffStartDate = "+ workingEffStartDateUpd + "\n- EffEndDate = "+ workingEffEndDateUpd + "\n- AutoRenew = "+ autoRenewUpd + "\n- ProductAttribute = "+ prodAttrUpd + "\n- Status = "+ sessionStatusUpd ;
+
+			
+			strMsg = strMsg + "\n" + "==================================================";
+			log.info(strMsg);
+		} else {
+			strMsg = "No records matched Input Criteria..No records Updated";
+			log.warn(strMsg);
+		}
+
+		requestContext.responseMessage = strMsg;
+
+		//log.info("...Updated Data Successfully to Csi Mock DB...");   
+	} catch(Exception ex) {
+		log.error("...Some Error Occurred in UPDATE..."+ ex.getMessage());
+	} finally {
+		log.info("...Exiting UPDATE...");
+	}
+
+
+
+log.info("End of UPDATE Operation");
+
+	
+} else if (op == 'VIEW') {
+
+	log.info("VIEW REQUEST .. from SOAP UI");
+	def msisdnReqViewTool = req.Body.InquireMobileSubscriberProfileRequest.subscriberNumber ;
+	msisdn = msisdnReqViewTool.toLong();
+	log.info (msisdn);
+	def statusActive = "A";
+	
+	def prodattr;
+	def sessionid;
+	def sessionstatus;
+	def startdate;
+	def enddate;
+	def usagelimit;
+	def usageunit;
+	def usageusedunits;
+	def autorenew;
+
+	// clean up code
+	context.setProperty( "activeprodattr", "" )
+	context.setProperty( "activesessionid", "" )
+	context.setProperty( "activestatus", "" )
+	context.setProperty( "activestartdate", "" )
+	context.setProperty( "activeenddate", "" )
+	context.setProperty( "activeautorenew", "" )
+	
+	context.setProperty( "activeusageunit", "" )
+	context.setProperty( "activeusagelimit", "" )
+	context.setProperty( "activeusageused", "" )		
+	log.info("   Clean Up Context for Active Plan Done   ");
+	//
+	
+	try {
+		def resViewActTool = con.rows('select * from SUBSCRIBER_DATA where MSISDN = ? and SESSIONSTATUS = ?', [msisdn, statusActive]);
+		log.info(resViewActTool.size());
+		if (resViewActTool.size() > 0) {
+			sessionid = resViewActTool[0].get("DATASETID");
+			prodattr = resViewActTool[0].get("PRODUCTATTRIBUTES");
+			usageunit = resViewActTool[0].get("USAGE_LIMIT_UNIT");
+			usagelimit = resViewActTool[0].get("USAGE_LIMIT");
+			usageusedunits = resViewActTool[0].get("USAGE_USED");
+			sessionstatus = resViewActTool[0].get("SESSIONSTATUS");
+			startdate = resViewActTool[0].get("RECURRENT_STARTTIME");
+			enddate = resViewActTool[0].get("RECURRENT_ENDTIME");
+			autorenew = resViewActTool[0].get("RECURRENT_AUTORENEW");
+
+			log.info(sessionid + "==" + prodattr + "==" + usageunit + "==" + usagelimit + "==" + usageusedunits + "==" + sessionstatus + "=="+ startdate + "=="+ enddate + "==" + autorenew);
+			context.setProperty( "activeprodattr", prodattr )
+			context.setProperty( "activesessionid", sessionid )
+			context.setProperty( "activestatus", sessionstatus )
+			context.setProperty( "activestartdate", startdate )
+			context.setProperty( "activeenddate", enddate )
+			context.setProperty( "activeautorenew", autorenew )
+			
+			context.setProperty( "activeusageunit", usageunit )
+			context.setProperty( "activeusagelimit", usagelimit )
+			context.setProperty( "activeusageused", usageusedunits )			
+		} else if (resViewActTool.size() == 0) {
+			context.setProperty( "activeprodattr", prodattr )
+			context.setProperty( "activesessionid", sessionid )
+			context.setProperty( "activestatus", sessionstatus )
+			context.setProperty( "activestartdate", startdate )
+			context.setProperty( "activeenddate", enddate )
+			context.setProperty( "activeautorenew", autorenew )
+			
+			context.setProperty( "activeusageunit", usageunit )
+			context.setProperty( "activeusagelimit", usagelimit )
+			context.setProperty( "activeusageused", usageusedunits )		
+		}
+
+	
+	} catch (Exception ex) {
+		log.error("... Some Error in Viewing Active Plans ..."+e.getMessage());
+	} finally {
+		prodattr = "";
+		sessionid = "";
+		sessionstatus = "";
+		startdate = "";
+		enddate = "";
+		usagelimit = "";
+		usageunit = "";
+		usageusedunits = "";
+		autorenew = "";
+	}	
+	def resViewAllTool;
+
+	//clean up code
+	for (int k = 0; k < 11; k++) {
+		context.setProperty( "stack"+(k+1)+"prodattr", "" )
+		context.setProperty( "stack"+(k+1)+"sessionid", "" )
+		context.setProperty( "stack"+(k+1)+"status", "" )
+		context.setProperty( "stack"+(k+1)+"startdate", "" )
+		context.setProperty( "stack"+(k+1)+"enddate", "" )
+		context.setProperty( "stack"+(k+1)+"autorenew", "" )
+		context.setProperty( "stack"+(k+1)+"usageunit", "" )
+		context.setProperty( "stack"+(k+1)+"usagelimit", "" )
+		context.setProperty( "stack"+(k+1)+"usageusedunits", "" )	
+	}
+
+	log.info("   Context Clean Up for Stack Plans Done   ");
+	// 
+	try {
+		resViewAllTool = con.rows('select * from SUBSCRIBER_DATA where MSISDN = ? and SESSIONSTATUS in  (?,?)', [msisdn, 'S', 'R']);
+		if (resViewAllTool.size() > 0) {
+			for (int m = 0; m < resViewAllTool.size(); m++) {
+				sessionid = resViewAllTool[m].get("DATASETID");
+				prodattr = resViewAllTool[m].get("PRODUCTATTRIBUTES");
+				usageunit = resViewAllTool[m].get("USAGE_LIMIT_UNIT");
+				usagelimit = resViewAllTool[m].get("USAGE_LIMIT");
+				usageusedunits = resViewAllTool[m].get("USAGE_USED");
+				sessionstatus = resViewAllTool[m].get("SESSIONSTATUS");
+				startdate = resViewAllTool[m].get("RECURRENT_STARTTIME");
+				enddate = resViewAllTool[m].get("RECURRENT_ENDTIME");
+				autorenew = resViewAllTool[m].get("RECURRENT_AUTORENEW");
+
+				log.info(sessionid + "==" + prodattr + "==" + usageunit + "==" + usagelimit + "==" + usageusedunits + "==" + sessionstatus + "=="+ startdate + "=="+ enddate + "==" + autorenew);
+				context.setProperty( "stack"+(m+1)+"prodattr", prodattr )
+				context.setProperty( "stack"+(m+1)+"sessionid", sessionid )
+				context.setProperty( "stack"+(m+1)+"status", sessionstatus )
+				context.setProperty( "stack"+(m+1)+"startdate", startdate )
+				context.setProperty( "stack"+(m+1)+"enddate", enddate )
+				context.setProperty( "stack"+(m+1)+"autorenew", autorenew )
+				context.setProperty( "stack"+(m+1)+"usageunit", usageunit )
+				context.setProperty( "stack"+(m+1)+"usagelimit", usagelimit )
+				context.setProperty( "stack"+(m+1)+"usageusedunits", usageusedunits )				
+			}
+		}
+	} catch (Exception ex) {
+		log.error("... Some Error in Viewing Stack Plans ..."+e.getMessage());
+	} finally {
+		prodattr = "";
+		sessionid = "";
+		sessionstatus = "";
+		startdate = "";
+		enddate = "";
+		usagelimit = "";
+		usageunit = "";
+		usageusedunits = "";
+		autorenew = "";
+	}
+
+	// start of formatting the View Response
+	   try {
+		def viewSuccessResponseMessage = "";
+		def viewFailureResponseMessage;
+		def sessionidMsg;
+		def prodattrMsg;
+		def usageunitMsg;
+		def usagelimitMsg;
+		def usageusedunitsMsg;
+		def sessionstatusMsg;
+		def startdateMsg;
+		def enddateMsg;
+		def autorenewMsg;
+		def varMessage;
+		def startingMessage;
+		def resViewAllPlans = con.rows('select * from SUBSCRIBER_DATA where MSISDN = ? ', [msisdn]);
+		log.info (" resViewAllPlans " + resViewAllPlans.size());
+		
+		if (resViewAllPlans.size() > 0) {
+			startingMessage = "The following records are retrieved for MSISDN: "+ msisdn + "\n" + "----------------------------------------------------------";
+				for (int p = 0; p < resViewAllPlans.size(); p++) {
+					sessionidMsg = resViewAllPlans[p].get("DATASETID");
+					prodattrMsg = resViewAllPlans[p].get("PRODUCTATTRIBUTES");
+					usageunitMsg = resViewAllPlans[p].get("USAGE_LIMIT_UNIT");
+					usagelimitMsg = resViewAllPlans[p].get("USAGE_LIMIT");
+					usageusedunitsMsg = resViewAllPlans[p].get("USAGE_USED");
+					sessionstatusMsg = resViewAllPlans[p].get("SESSIONSTATUS");
+					startdateMsg = resViewAllPlans[p].get("RECURRENT_STARTTIME");
+					enddateMsg = resViewAllPlans[p].get("RECURRENT_ENDTIME");
+					autorenewMsg = resViewAllPlans[p].get("RECURRENT_AUTORENEW");
+					varMessage = "\n- SessionId = "+sessionidMsg + "\n"+ "- MSISDN = "+ msisdn + "\n" + "- UsageLimit = " + usagelimitMsg + "\n- UsageUnit = "+ usageunitMsg + "\n- UsageUsed = "+ usageusedunitsMsg + "\n- EffStartDate = "+ startdateMsg + "\n- EffEndDate = "+ enddateMsg + "\n- AutoRenew = "+ autorenewMsg + "\n- ProductAttribute = "+ prodattrMsg + "\n- Status = "+sessionstatusMsg;
+					varMessage =  varMessage + "\n" + "=================================================" + "\n" + "=================================================";
+					viewSuccessResponseMessage = viewSuccessResponseMessage + varMessage;
+					log.info("viewSuccessResponseMessage" + viewSuccessResponseMessage);
+				} 
+				viewSuccessResponseMessage = startingMessage + viewSuccessResponseMessage;
+				requestContext.responseMessage = viewSuccessResponseMessage;
+		} else {
+			viewFailureResponseMessage = "There are no matching records for MSISDN "+msisdn;
+			viewFailureResponseMessage = viewFailureResponseMessage + "\n\n" + "====================================";
+			requestContext.responseMessage = viewFailureResponseMessage;
+		}
+	} catch (Exception e) {
+		log.error("Error in formatting Response "+ e.getMessage());
+	} 
+	// end of formatting response
+	
+} else {
+	log.info("ECE GET REQUEST");
+	def msisdnReqView = req.Body.InquireMobileSubscriberProfileRequest.subscriberNumber ;
+	msisdn = msisdnReqView.toLong();
+	log.info (msisdn);
+	def statusActive = "A";
+	
+	def prodattr;
+	def sessionid;
+	def sessionstatus;
+	def startdate;
+	def enddate;
+	def usagelimit;
+	def usageunit;
+	def usageusedunits;
+	def autorenew;
+
+	// clean up code
+	context.setProperty( "activeprodattr", "" )
+	context.setProperty( "activesessionid", "" )
+	context.setProperty( "activestatus", "" )
+	context.setProperty( "activestartdate", "" )
+	context.setProperty( "activeenddate", "" )
+	context.setProperty( "activeautorenew", "" )
+	
+	context.setProperty( "activeusageunit", "" )
+	context.setProperty( "activeusagelimit", "" )
+	context.setProperty( "activeusageused", "" )		
+	log.info("   Clean Up Context for Active Plan Done   ");
+	//
+	
+	try {
+		def resViewAct = con.rows('select * from SUBSCRIBER_DATA where MSISDN = ? and SESSIONSTATUS = ?', [msisdn, statusActive]);
+		log.info(resViewAct.size());
+		if (resViewAct.size() > 0) {
+			sessionid = resViewAct[0].get("DATASETID");
+			prodattr = resViewAct[0].get("PRODUCTATTRIBUTES");
+			usageunit = resViewAct[0].get("USAGE_LIMIT_UNIT");
+			usagelimit = resViewAct[0].get("USAGE_LIMIT");
+			usageusedunits = resViewAct[0].get("USAGE_USED");
+			sessionstatus = resViewAct[0].get("SESSIONSTATUS");
+			startdate = resViewAct[0].get("RECURRENT_STARTTIME");
+			enddate = resViewAct[0].get("RECURRENT_ENDTIME");
+			autorenew = resViewAct[0].get("RECURRENT_AUTORENEW");
+
+
+
+		log.info(sessionid + "==" + prodattr + "==" + usageunit + "==" + usagelimit + "==" + usageusedunits + "==" + sessionstatus + "=="+ startdate + "=="+ enddate + "==" + autorenew);
+		context.setProperty( "activeprodattr", prodattr )
+		context.setProperty( "activesessionid", sessionid )
+		context.setProperty( "activestatus", sessionstatus )
+		context.setProperty( "activestartdate", startdate )
+		context.setProperty( "activeenddate", enddate )
+		context.setProperty( "activeautorenew", autorenew )
+		
+		context.setProperty( "activeusageunit", usageunit )
+		context.setProperty( "activeusagelimit", usagelimit )
+		context.setProperty( "activeusageused", usageusedunits )			
+		} else if (resViewAct.size() == 0) {
+			context.setProperty( "activeprodattr", prodattr )
+			context.setProperty( "activesessionid", sessionid )
+			context.setProperty( "activestatus", sessionstatus )
+			context.setProperty( "activestartdate", startdate )
+			context.setProperty( "activeenddate", enddate )
+			context.setProperty( "activeautorenew", autorenew )
+			
+			context.setProperty( "activeusageunit", usageunit )
+			context.setProperty( "activeusagelimit", usagelimit )
+			context.setProperty( "activeusageused", usageusedunits )		
+		}
+
+	
+	} catch (Exception ex) {
+		log.error("... Some Error in Viewing Active Plans ..."+e.getMessage());
+	} finally {
+		prodattr = "";
+		sessionid = "";
+		sessionstatus = "";
+		startdate = "";
+		enddate = "";
+		usagelimit = "";
+		usageunit = "";
+		usageusedunits = "";
+		autorenew = "";
+	}	
+	def resViewAll;
+
+	//clean up code
+		for (int k = 0; k < 11; k++) {
+			context.setProperty( "stack"+(k+1)+"prodattr", "" )
+			context.setProperty( "stack"+(k+1)+"sessionid", "" )
+			context.setProperty( "stack"+(k+1)+"status", "" )
+			context.setProperty( "stack"+(k+1)+"startdate", "" )
+			context.setProperty( "stack"+(k+1)+"enddate", "" )
+			context.setProperty( "stack"+(k+1)+"autorenew", "" )
+			context.setProperty( "stack"+(k+1)+"usageunit", "" )
+			context.setProperty( "stack"+(k+1)+"usagelimit", "" )
+			context.setProperty( "stack"+(k+1)+"usageusedunits", "" )	
+		}
+
+		log.info("   Context Clean Up for Stack Plans Done   ");
+	// 
+	try {
+		resViewAll = con.rows('select * from SUBSCRIBER_DATA where MSISDN = ? and SESSIONSTATUS in  (?,?)', [msisdn, 'S', 'R']);
+		if (resViewAll.size() > 0) {
+			for (int m = 0; m < resViewAll.size(); m++) {
+				sessionid = resViewAll[m].get("DATASETID");
+				prodattr = resViewAll[m].get("PRODUCTATTRIBUTES");
+				usageunit = resViewAll[m].get("USAGE_LIMIT_UNIT");
+				usagelimit = resViewAll[m].get("USAGE_LIMIT");
+				usageusedunits = resViewAll[m].get("USAGE_USED");
+				sessionstatus = resViewAll[m].get("SESSIONSTATUS");
+				startdate = resViewAll[m].get("RECURRENT_STARTTIME");
+				enddate = resViewAll[m].get("RECURRENT_ENDTIME");
+				autorenew = resViewAll[m].get("RECURRENT_AUTORENEW");
+
+				log.info(sessionid + "==" + prodattr + "==" + usageunit + "==" + usagelimit + "==" + usageusedunits + "==" + sessionstatus + "=="+ startdate + "=="+ enddate + "==" + autorenew);
+				context.setProperty( "stack"+(m+1)+"prodattr", prodattr )
+				context.setProperty( "stack"+(m+1)+"sessionid", sessionid )
+				context.setProperty( "stack"+(m+1)+"status", sessionstatus )
+				context.setProperty( "stack"+(m+1)+"startdate", startdate )
+				context.setProperty( "stack"+(m+1)+"enddate", enddate )
+				context.setProperty( "stack"+(m+1)+"autorenew", autorenew )
+				context.setProperty( "stack"+(m+1)+"usageunit", usageunit )
+				context.setProperty( "stack"+(m+1)+"usagelimit", usagelimit )
+				context.setProperty( "stack"+(m+1)+"usageusedunits", usageusedunits )				
+			}
+		}
+	} catch (Exception ex) {
+		log.error("... Some Error in Viewing Stack Plans ..."+e.getMessage());
+	} finally {
+		prodattr = "";
+		sessionid = "";
+		sessionstatus = "";
+		startdate = "";
+		enddate = "";
+		usagelimit = "";
+		usageunit = "";
+		usageusedunits = "";
+		autorenew = "";
+	}
+		
+}
+
+con.close();
+log.info(" ... Connection to CsiMockDB is Closed ...");
